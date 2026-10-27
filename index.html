@@ -618,10 +618,16 @@ function exErr(e){const m=(e&&e.message)||String(e),c=(e&&e.code)||'';
   if(EXERR[m])return EXERR[m];
   for(const k in EXERR)if(m.includes(k))return EXERR[k];
   return 'Erro inesperado: '+m}
-// Cooldown: um link visto volta a ficar disponível para o mesmo visitante após 2 min
-const COOL=120000;let seen={};try{seen=JSON.parse(localStorage.getItem('bbsar_seen')||'{}')}catch(e){}
-function exMark(id){seen[id]=Date.now();try{const n=Date.now();for(const k in seen)if(n-seen[k]>COOL*5)delete seen[k];localStorage.setItem('bbsar_seen',JSON.stringify(seen))}catch(e){}}
+// Cooldown: um link visto volta a ficar disponível para o mesmo visitante após 60 s
+const COOL=60000;let seen={};try{seen=JSON.parse(localStorage.getItem('bbsar_seen')||'{}')}catch(e){}
+function exMark(id){seen[id]=Date.now();try{const n=Date.now();for(const k in seen)if(n-seen[k]>3600000)delete seen[k];localStorage.setItem('bbsar_seen',JSON.stringify(seen))}catch(e){}}
 function exLeft(id){const t=seen[id];return t?Math.max(0,COOL-(Date.now()-t)):0}
+const known={};
+// Junta a lista do servidor com links já vistos que o servidor tenha deixado de listar, para voltarem a aparecer
+function exMerge(list){const out=(list||[]).slice(),have=new Set(out.map(f=>f.id));
+  out.forEach(f=>{known[f.id]=f});
+  for(const id in seen)if(!have.has(id)&&known[id])out.push(known[id]);
+  return out}
 function exFmt(ms){const s=Math.ceil(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 function exCoolTick(){document.querySelectorAll('button[data-cool]').forEach(b=>{const l=exLeft(b.dataset.cool);b.disabled=l>0;b.textContent=l?T('Volta em')+' '+exFmt(l):T('Ver')})}
 setInterval(exCoolTick,1000);
@@ -654,8 +660,9 @@ function exRender(){
 function exRenderFeat(){
   $('exFeatNote').textContent=T('Os sites de quem tem mais de {n} créditos aparecem primeiro; os da app sobem automaticamente quando a app tem créditos.').replace('{n}',ex.fo);
   const box=$('exFeat');box.textContent='';
-  if(!ex.feat.length){const p=document.createElement('div');p.className='note';p.textContent=T('Ainda não há links disponíveis. Volta mais tarde.');box.append(p);return}
-  ex.feat.forEach(f=>{
+  const FL=exMerge(ex.feat);
+  if(!FL.length){const p=document.createElement('div');p.className='note';p.textContent=T('Ainda não há links disponíveis. Volta mais tarde.');box.append(p);return}
+  FL.forEach(f=>{
     const r=document.createElement('div');r.className='exf';
     const u=document.createElement('span');u.className='u';u.textContent=f.url.replace(/^https:\/\//,'');u.title=f.url;
     const b=document.createElement('b');if(f.tier<2){b.className=f.tier===0?'st-approved':'st-pending';b.textContent=T(f.tier===0?'App':'★ Destaque')}
@@ -672,10 +679,11 @@ function exClear(){clearInterval(ex.tm);ex.tm=null;clearTimeout(ex.nt);ex.nt=nul
 function exShow(on){exWake(on);$('exView').hidden=!on;$('exStart').hidden=on;['exSkip','exReport','exStop'].forEach(k=>$(k).hidden=!on);if(!on)$('exFrame').src='about:blank'}
 async function exNext(tries=0,siteId){
   exClear();ex.cur=null;ex.ok='';
-  if(!siteId&&ex.feat.length){
-    const f=ex.feat.find(x=>exLeft(x.id)===0);
+  const FL=exMerge(ex.feat);
+  if(!siteId&&FL.length){
+    const f=FL.find(x=>exLeft(x.id)===0);
     if(f)siteId=f.id;
-    else if(ex.surf){const w=Math.min(...ex.feat.map(x=>exLeft(x.id)));ex.nt=setTimeout(()=>exNext(),Math.max(1000,w));exCoolTick();return}
+    else if(ex.surf){const w=Math.min(...FL.map(x=>exLeft(x.id)));ex.nt=setTimeout(()=>exNext(),Math.max(1000,w));exCoolTick();return}
   }
   let r;try{r=await(siteId?rpc('ex_start_view',{p_site:siteId}):rpc('ex_next_view'))}catch(e){ex.err=exErr(e);ex.surf=false;exShow(false);exRender();exFeatRefresh();return}
   if(!r){ex.err='Não há sites disponíveis agora. Volta mais tarde.';ex.surf=false;exShow(false);exRender();return}
@@ -705,13 +713,15 @@ async function exWake(on){try{if(on&&!wake){wake=await navigator.wakeLock.reques
 // Lista pública (qualquer pessoa vê, sem conta) e painel do dono
 function exRenderPub(){
   const box=$('exPub');if(!box)return;box.textContent='';
-  if(!ex.pub.length){const p=document.createElement('div');p.className='note';p.textContent=T('Ainda não há links disponíveis. Volta mais tarde.');box.append(p);return}
-  ex.pub.forEach(f=>{
+  const PL=exMerge(ex.pub);
+  if(!PL.length){const p=document.createElement('div');p.className='note';p.textContent=T('Ainda não há links disponíveis. Volta mais tarde.');box.append(p);return}
+  PL.forEach(f=>{
     const r=document.createElement('div');r.className='exf';
     const u=document.createElement('span');u.className='u';u.textContent=f.url.replace(/^https:\/\//,'');u.title=f.url;
     const b=document.createElement('b');if(f.tier<2){b.className=f.tier===0?'st-approved':'st-pending';b.textContent=T(f.tier===0?'App':'★ Destaque')}
     const v=document.createElement('button');v.className='sm pri';v.textContent=T('Ver');v.dataset.cool=f.id;v.onclick=()=>exPubView(f.id);
     r.append(u,b,v);box.append(r)});exCoolTick()}
+setInterval(()=>{if(document.visibilityState==='visible'&&!ex.cur){exPubLoad();if(ex.ready)exFeatRefresh()}},30000);
 async function exPubLoad(){try{await loadSb();const c=getClient();if(c){const {data,error}=await c.rpc('ex_public_list');if(!error&&Array.isArray(data))ex.pub=data}}catch(e){}exRenderPub()}
 async function exPubView(id){
   if(exLeft(id)>0)return;
